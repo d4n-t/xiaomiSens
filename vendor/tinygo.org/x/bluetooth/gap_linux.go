@@ -204,6 +204,21 @@ func (a *Adapter) Scan(callback func(*Adapter, ScanResult)) error {
 							mData[k] = v.Value().(interface{})
 						}
 						props.ManufacturerData = mData
+					case "ServiceData":
+						sData := make(map[string]interface{})
+						for k, v := range val.Value().(map[string]dbus.Variant) {
+							sData[k] = v.Value().(interface{})
+						}
+						props.ServiceData = sData
+						nData := make(map[string][]byte)
+						for k, v := range sData {
+							switch val := v.(type) {
+							case dbus.Variant:
+								nData[k] = val.Value().([]byte)
+							case []byte:
+								nData[k] = val
+							}
+						}
 					}
 				}
 				callback(a, makeScanResult(props))
@@ -255,6 +270,16 @@ func makeScanResult(props *device.Device1Properties) ScanResult {
 		}
 	}
 
+	sData := make(map[string][]byte)
+	for k, v := range props.ServiceData {
+		switch val := v.(type) {
+		case dbus.Variant:
+			sData[k] = val.Value().([]byte)
+		case []byte:
+			sData[k] = val
+		}
+	}
+
 	return ScanResult{
 		RSSI:    props.RSSI,
 		Address: a,
@@ -263,6 +288,7 @@ func makeScanResult(props *device.Device1Properties) ScanResult {
 				LocalName:        props.Name,
 				ServiceUUIDs:     serviceUUIDs,
 				ManufacturerData: mData,
+				ServiceData:      sData,
 			},
 		},
 	}
