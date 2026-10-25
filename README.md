@@ -3,9 +3,10 @@
 A Go application that scans Bluetooth Low Energy (BLE) advertisements from
 reprogrammed Xiaomi BLE temp2 sensors and exposes their readings for Prometheus.
 
-The intended deployment is a small computer with Bluetooth hardware, such as a
-Raspberry Pi with a build for its architecture. An older version already runs on
-a Raspberry Pi; this refactored version has been tested live on an Ubuntu laptop.
+The application runs on a Raspberry Pi 4 and is developed and tested on an Ubuntu
+laptop. The refactored application was deployed and verified on the Pi on
+2026-10-25. See the [deployment runbook](docs/deployment.md) for the tested build
+settings, monitoring configuration, verification steps, and rollback procedure.
 
 All six sensors currently run custom firmware version 5.9 from
 [pvvx/ATC_MiThermometer](https://github.com/pvvx/ATC_MiThermometer), configured for
@@ -59,7 +60,11 @@ after matching advertisements are received.
 
 For a Raspberry Pi, build for the Linux architecture matching its operating
 system. The existing Raspberry Pi 4 deployment uses **32-bit armhf userspace**
-with a 64-bit kernel. A cross-build for that Pi is:
+with a 64-bit kernel. The verified production build was compiled natively on the
+Pi with Go 1.27.3, `GOARM=6`, and `CGO_ENABLED=1`, preserving the previous build's
+settings. Follow the runbook to build in staging and replace the service safely.
+
+A static ARMv7 cross-build is also available for that Pi:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -mod=vendor -o xiaomiSens-linux-arm .
@@ -74,7 +79,7 @@ GOOS=linux GOARCH=arm64 go build -mod=vendor -o xiaomiSens-linux-arm64 .
 The target computer needs its own Bluetooth hardware and BlueZ setup. Check the
 userspace architecture rather than relying only on the kernel's `uname -m`
 output. The refactored application cross-compiles for the Pi; its live deployment
-there has not yet been verified.
+was verified with all six sensors and the existing Prometheus/Grafana setup.
 
 ## Metrics and scaling
 
