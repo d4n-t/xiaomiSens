@@ -4,8 +4,14 @@ A Go application that scans Bluetooth Low Energy (BLE) advertisements from
 reprogrammed Xiaomi BLE temp2 sensors and exposes their readings for Prometheus.
 
 The intended deployment is a small computer with Bluetooth hardware, such as a
-Raspberry Pi with a build for its architecture. For now, the application runs on
-an Ubuntu laptop.
+Raspberry Pi with a build for its architecture. An older version already runs on
+a Raspberry Pi; this refactored version has been tested live on an Ubuntu laptop.
+
+All six sensors currently run custom firmware version 5.9 from
+[pvvx/ATC_MiThermometer](https://github.com/pvvx/ATC_MiThermometer), configured for
+unencrypted **Custom/PVVX** advertisements. Live readings and metrics were verified
+after the upgrade. BTHome and ATC advertisement formats are not supported by this
+decoder.
 
 ## How it works
 
@@ -52,14 +58,23 @@ another machine can scrape `<exporter-host>:8081`. Sensor metric series appear
 after matching advertisements are received.
 
 For a Raspberry Pi, build for the Linux architecture matching its operating
-system. For example, a 64-bit Raspberry Pi OS build can be cross-compiled with:
+system. The existing Raspberry Pi 4 deployment uses **32-bit armhf userspace**
+with a 64-bit kernel. A cross-build for that Pi is:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -mod=vendor -o xiaomiSens-linux-arm .
+```
+
+For a 64-bit Raspberry Pi OS userspace, use:
 
 ```bash
 GOOS=linux GOARCH=arm64 go build -mod=vendor -o xiaomiSens-linux-arm64 .
 ```
 
-The target computer needs its own Bluetooth hardware and BlueZ setup. Raspberry
-Pi deployment remains an intended target rather than a verified deployment.
+The target computer needs its own Bluetooth hardware and BlueZ setup. Check the
+userspace architecture rather than relying only on the kernel's `uname -m`
+output. The refactored application cross-compiles for the Pi; its live deployment
+there has not yet been verified.
 
 ## Metrics and scaling
 
@@ -105,13 +120,13 @@ runs elsewhere, including in a separate container.
 
 ## Current configuration and future work
 
-Sensor MAC addresses are currently hardcoded in `macWhitelist` in `main.go`;
-the HTTP port is also hardcoded. Edit these values and rebuild when necessary.
+Sensor MAC addresses are currently hardcoded in `sensorMACs` in `config.go`;
+the HTTP port is also defined there. Edit these values and rebuild when necessary.
 
 The following improvements are deferred:
 
-- Update sensor firmware and the project's libraries, then improve payload
-  handling and validation for the resulting advertisement format. The current
+- Update the project's Bluetooth libraries and improve payload handling and
+  validation. Sensor firmware has already been updated to 5.9. The current
   decoder assumes the expected layout and does not check payload length.
 - Add freshness metrics to identify sensors that have stopped transmitting.
   Currently, the last readings remain exposed while the exporter is running.
@@ -119,5 +134,51 @@ The following improvements are deferred:
 - Move sensor addresses and server settings into external configuration.
 
 The application currently uses `tinygo.org/x/bluetooth` for Bluetooth access and
-`github.com/prometheus/client_golang` for metrics. There are no automated tests
-yet.
+`github.com/prometheus/client_golang` for metrics.
+
+## Code structure
+
+The application remains a single Go package, split by responsibility so changes
+can be made without navigating one large scan callback:
+
+| File | Responsibility |
+| --- | --- |
+| `main.go` | Wire the real Bluetooth adapter, registry, output, and HTTP server together. |
+| `config.go` | Default sensor addresses, service UUID, and listen address. |
+| `payload.go` | Decode firmware bytes into a measurement, preserving raw units. |
+| `exporter.go` | Filter advertisements, print readings, and update metrics. |
+| `metrics.go` | Define Prometheus gauges and the `/metrics` HTTP handler. |
+| `app.go` | Enable Bluetooth and run scanning alongside HTTP serving; report failures. |
+| `*_test.go` | Unit tests and an advertisement-to-HTTP integration test. |
+
+Use `go run -mod=vendor .` to run the whole package during development. Running
+only `main.go` does not include the other application files.
+
+## Tests
+
+Run all tests, including the race detector, and static checks:
+
+```bash
+go test -mod=vendor -race -cover ./...
+go vet -mod=vendor ./...
+```
+
+The tests use a fake Bluetooth adapter and in-memory HTTP requests. They require
+no Bluetooth hardware, sensor access, network listener, or running Prometheus.
+The race detector requires a supported host toolchain with CGO and a C compiler.
+
+Coverage includes payload byte order, signed temperatures and field boundaries,
+raw metric scaling, label isolation, repeated readings and sequence wraparound,
+advertisement filtering, console formatting, HTTP scrapes, concurrent metric
+updates, and adapter/scanner/server errors. An integration test exercises a
+sensor advertisement through the application to a Prometheus scrape.
+
+When changing the decoder, add a hand-written byte fixture and expected reading
+in `payload_test.go`. When changing metrics, update the expected scrape output
+in `metrics_test.go`. Shared fixtures and metric assertions live in
+`test_helpers_test.go`.
+
+The small `main` wiring function, the Bluetooth library, and real radio behavior
+are not exercised by the automated tests. Verify actual sensor reception on the
+target computer separately. Payload validation, freshness, retries, and graceful
+shutdown remain deferred as described above.
